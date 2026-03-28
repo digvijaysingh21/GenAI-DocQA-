@@ -1,0 +1,216 @@
+# ============================================================
+# GenAI DocQA Platform — pyproject.toml
+# ============================================================
+# Modern Python project config — ONE file replaces:
+#   setup.cfg, .flake8, mypy.ini, pytest.ini, .isort.cfg
+#
+# Tools configured here:
+#   - Ruff   : ultra-fast linter + formatter (replaces flake8 + black + isort)
+#   - Mypy   : static type checker
+#   - Pytest : test runner
+# ============================================================
+
+
+[tool.ruff]
+# ── Target Python version ────────────────────────────────────
+target-version = "py312"
+
+# ── Line length ───────────────────────────────────────────────
+# 88 is the Black formatter standard — widely adopted
+line-length = 88
+
+# ── Which files/folders to check ─────────────────────────────
+include = ["**/*.py"]
+exclude = [
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "alembic/versions",   # auto-generated migration files — don't lint
+    "build",
+    "dist",
+]
+
+
+[tool.ruff.lint]
+# ── Rules to enable ──────────────────────────────────────────
+# Each letter prefix is a category of rules:
+#   E  = pycodestyle errors (spacing, indentation)
+#   W  = pycodestyle warnings
+#   F  = pyflakes (unused imports, undefined names)
+#   I  = isort (import ordering)
+#   B  = flake8-bugbear (common bug patterns)
+#   C4 = flake8-comprehensions (better list/dict comprehensions)
+#   UP = pyupgrade (use modern Python syntax)
+#   S  = flake8-bandit (security issues)
+#   N  = pep8-naming (naming conventions)
+select = ["E", "W", "F", "I", "B", "C4", "UP", "S", "N"]
+
+# ── Rules to ignore ──────────────────────────────────────────
+ignore = [
+    # FastAPI uses Depends() as a default argument — ruff wrongly flags this
+    # Example: async def route(db = Depends(get_db)) → ruff says "don't call
+    # functions in default args" but this is exactly how FastAPI DI works
+    "B008",
+
+    # Allow assert statements in tests
+    "S101",
+
+    # Allow hardcoded passwords in .env.example and test files
+    "S105",
+    "S106",
+
+    # Too strict — we use meaningful variable names even if short
+    "E501",
+]
+
+
+[tool.ruff.lint.per-file-ignores]
+# Test files get relaxed rules
+"tests/**/*.py" = [
+    "S101",    # assert is fine in tests
+    "S105",    # hardcoded passwords fine in test fixtures
+    "N802",    # function names can be non-lowercase in tests
+]
+
+# Migration files are auto-generated — ignore all style issues
+"alembic/versions/*.py" = ["E501", "F401"]
+
+
+[tool.ruff.lint.isort]
+# Group imports in this order:
+#   1. Standard library (os, sys, datetime...)
+#   2. Third party (fastapi, sqlalchemy, pydantic...)
+#   3. Local (app.config, app.models...)
+known-third-party = ["fastapi", "sqlalchemy", "pydantic", "redis", "langchain"]
+known-first-party = ["app"]
+
+
+[tool.ruff.format]
+# Use double quotes everywhere (consistent with Black)
+quote-style = "double"
+
+# Indent with 4 spaces (Python standard)
+indent-style = "space"
+
+
+# ============================================================
+# MYPY — Static Type Checker
+# Catches type errors before runtime
+# ============================================================
+
+[tool.mypy]
+python_version = "3.12"
+
+# ── Strictness settings ───────────────────────────────────────
+# warn_return_any: flag functions that return Any (too loose)
+warn_return_any = true
+
+# warn_unused_configs: flag unused mypy config options
+warn_unused_configs = true
+
+# disallow_untyped_defs: every function MUST have type annotations
+# This forces us to be explicit about what goes in and comes out
+disallow_untyped_defs = true
+
+# disallow_incomplete_defs: partial annotations are not allowed
+disallow_incomplete_defs = true
+
+# check_untyped_defs: also check functions without annotations
+check_untyped_defs = true
+
+# no_implicit_optional: x: str = None must be x: str | None = None
+no_implicit_optional = true
+
+# warn_redundant_casts: flag unnecessary type: ignore comments
+warn_redundant_casts = true
+
+# ── Per-library overrides ─────────────────────────────────────
+# Some third-party libraries don't have type stubs
+# We silence mypy errors for these specific libraries
+[[tool.mypy.overrides]]
+module = [
+    "langchain.*",
+    "langchain_core.*",
+    "langchain_community.*",
+    "langgraph.*",
+    "langsmith.*",
+    "sentence_transformers.*",
+    "rank_bm25.*",
+    "pymupdf.*",
+    "fitz.*",
+    "camelot.*",
+    "pytesseract.*",
+    "presidio_analyzer.*",
+    "presidio_anonymizer.*",
+    "ragas.*",
+    "tavily.*",
+    "structlog.*",
+    "prometheus_client.*",
+    "mcp.*",
+]
+ignore_missing_imports = true
+
+
+# ============================================================
+# PYTEST — Test Runner Configuration
+# ============================================================
+
+[tool.pytest.ini_options]
+# ── Test discovery ────────────────────────────────────────────
+# Where to look for tests
+testpaths = ["tests"]
+
+# File pattern for test files
+python_files = ["test_*.py", "*_test.py"]
+
+# Function pattern for test functions
+python_functions = ["test_*"]
+
+# Class pattern for test classes
+python_classes = ["Test*"]
+
+# ── Output settings ───────────────────────────────────────────
+# -v          : verbose output (show each test name)
+# --tb=short  : short traceback on failure (not overwhelming)
+# -ra         : show summary of all non-passing tests at the end
+addopts = "-v --tb=short -ra"
+
+# ── Async test support ────────────────────────────────────────
+# Required for testing async FastAPI routes and async services
+asyncio_mode = "auto"
+
+# ── Environment variables for tests ──────────────────────────
+# These override .env during testing — safe fake values
+env = [
+    "ENVIRONMENT=test",
+    "DATABASE_URL=postgresql+asyncpg://docqa:docqa_password@localhost:5432/docqa_test",
+    "REDIS_URL=redis://localhost:6379/1",
+    "SECRET_KEY=test-secret-key-minimum-32-characters-long",
+    "ENCRYPTION_KEY=test-encryption-key-32-chars-long!!",
+    "GROQ_API_KEY=test-groq-key",
+]
+
+# ── Test markers ─────────────────────────────────────────────
+# Custom markers to categorize tests
+# Run only unit tests: pytest -m unit
+# Run only integration tests: pytest -m integration
+markers = [
+    "unit: fast tests with no external dependencies",
+    "integration: tests that need DB and Redis running",
+    "e2e: full end-to-end tests",
+    "slow: tests that take more than 5 seconds",
+]
+
+
+# ============================================================
+# PROJECT METADATA
+# ============================================================
+
+[tool.poetry]
+name = "genai-docqa"
+version = "1.0.0"
+description = "Production-grade Agentic RAG Document Intelligence System"
+authors = ["Digvijay Singh Rajput <digvijay@example.com>"]
+readme = "README.md"
+packages = [{include = "app"}]
