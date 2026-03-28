@@ -1,0 +1,242 @@
+# ============================================================
+# GenAI DocQA Platform — Python Dependencies
+# ============================================================
+# All versions are PINNED with == for deterministic builds
+# This means every machine installs the exact same versions
+# Never write just "fastapi" — always "fastapi==x.y.z"
+#
+# Update versions carefully and test before committing
+# ============================================================
+
+
+# ============================================================
+# GROUP 1 — API Framework
+# FastAPI + the server that runs it + file upload support
+# ============================================================
+
+# The web framework — handles routes, validation, WebSocket, SSE
+fastapi==0.115.5
+
+# ASGI server that actually runs FastAPI on a port
+# [standard] adds: websockets, httptools, uvloop (faster event loop)
+uvicorn[standard]==0.34.0
+
+# Required for file uploads (multipart/form-data)
+# Without this, POST /upload silently returns 422 — hard to debug
+python-multipart==0.0.20
+
+# Async file I/O — regular open() blocks the event loop
+# Used when saving uploaded files to disk
+aiofiles==24.1.0
+
+
+# ============================================================
+# GROUP 2 — Data Validation & Settings
+# Pydantic validates all data in and out of the API
+# ============================================================
+
+# Data validation library — request bodies, response schemas
+# v2 is a complete rewrite — much faster than v1
+pydantic==2.10.4
+
+# Same as pydantic but for environment variables
+# Reads .env file, validates types, fails fast at startup
+pydantic-settings==2.7.0
+
+
+# ============================================================
+# GROUP 3 — Database
+# SQLAlchemy (ORM) → asyncpg (driver) → PostgreSQL
+# ============================================================
+
+# The ORM — write Python classes instead of raw SQL
+# Version 2.0 added true async support (1.x async was a hack)
+sqlalchemy==2.0.36
+
+# Database migration tool — git for your database schema
+# Tracks every schema change, makes them reversible
+alembic==1.14.0
+
+# Async PostgreSQL driver — SQLAlchemy uses this under the hood
+# The chain: SQLAlchemy → asyncpg → PostgreSQL
+asyncpg==0.30.0
+
+# Adds Vector(1536) column type for pgvector extension
+# Required for semantic search / embedding storage
+pgvector==0.3.6
+
+
+# ============================================================
+# GROUP 4 — Auth & Security
+# JWT tokens + password hashing + API key encryption
+# ============================================================
+
+# JWT creation and verification
+# [cryptography] enables RS256/ES256 algorithms (stronger than HS256)
+python-jose[cryptography]==3.3.0
+
+# Password hashing — NEVER store plain text passwords
+# [bcrypt] is the hashing algorithm — industry standard, intentionally slow
+passlib[bcrypt]==1.7.4
+
+# AES-256-GCM encryption for LLM API keys stored in DB
+# Used in BYOK (Bring Your Own Key) feature
+cryptography==44.0.0
+
+
+# ============================================================
+# GROUP 5 — HTTP Client & Caching
+# Making external API calls + Redis + retry logic
+# ============================================================
+
+# Async HTTP client — for calling LLM APIs, Tavily search, etc.
+# requests library is synchronous (blocks) — httpx is async
+httpx==0.28.1
+
+# Async Redis client — rate limiting, query cache, embedding cache
+redis==5.2.1
+
+# Retry logic with exponential backoff
+# LLM API fails → wait 2s → retry → wait 4s → retry → give up
+tenacity==9.0.0
+
+
+# ============================================================
+# GROUP 6 — LLM Providers
+# Official SDKs for each LLM provider
+# We install all — user can use whichever they have keys for
+# ============================================================
+
+# OpenAI — GPT-4o, GPT-4o-mini
+openai==1.60.0
+
+# Anthropic — Claude Sonnet, Claude Haiku
+anthropic==0.42.0
+
+# Google — Gemini Pro, Gemini Flash
+google-generativeai==0.8.4
+
+# Groq — LLaMA-3, Mixtral (DEFAULT — free tier, very fast)
+groq==0.13.0
+
+# Mistral — Mistral Large, Mistral Small
+mistralai==1.2.5
+
+# Cohere — Command R+ (also used for reranking)
+cohere==5.13.0
+
+
+# ============================================================
+# GROUP 7 — AI Orchestration (LangChain + LangGraph)
+# The framework for building the 10-node agent
+# ============================================================
+
+# Core LangChain abstractions — always needed
+langchain-core==0.3.25
+
+# Main LangChain package — text splitters, prompt templates, LCEL
+langchain==0.3.10
+
+# Community integrations — BM25 retriever, document loaders
+langchain-community==0.3.10
+
+# LangChain wrappers for each LLM provider
+# These are used inside LangGraph agent nodes
+langchain-groq==0.2.3
+langchain-openai==0.3.0
+langchain-anthropic==0.3.0
+langchain-google-genai==2.0.8
+
+# LangGraph — builds the 10-node stateful agent as a graph
+# This is the heart of the agentic workflow
+langgraph==0.2.60
+
+# LangSmith — automatic tracing of every agent run
+# Zero extra code needed — just set LANGCHAIN_API_KEY in .env
+langsmith==0.2.10
+
+# Anthropic MCP SDK — Model Context Protocol
+# Lets the agent call external tools (files, search, calendars)
+mcp==1.0.0
+
+
+# ============================================================
+# GROUP 8 — Embeddings & Retrieval
+# Converting text to vectors + keyword search + web search
+# ============================================================
+
+# Local embedding models — free, runs on CPU, no API key
+# Model: all-MiniLM-L6-v2 (384-dim, fast, good quality)
+sentence-transformers==3.4.0
+
+# BM25 keyword search algorithm
+# Combined with vector search = hybrid search (better than either alone)
+rank-bm25==0.2.2
+
+# Token counting — estimate cost BEFORE calling LLM
+# Used for budget enforcement and context window management
+tiktoken==0.9.0
+
+# Web search API built for RAG agents
+# Returns clean text snippets (not raw HTML like Google)
+# Fallback when document retrieval fails — free: 1000 searches/month
+tavily-python==0.5.0
+
+
+# ============================================================
+# GROUP 9 — Document Processing
+# Parsing PDF, DOCX, PPTX, CSV + OCR for scanned PDFs
+# ============================================================
+
+# PDF parser — extracts text page by page with page numbers
+# Also detects scanned PDFs (low text density → trigger OCR)
+pymupdf==1.25.1
+
+# Word document parser — paragraphs, headings, tables
+python-docx==1.1.2
+
+# PowerPoint parser — slide by slide text + speaker notes
+python-pptx==1.0.2
+
+# CSV/Excel processing — rows converted to natural language sentences
+pandas==2.2.3
+
+# OCR for scanned PDFs — requires Tesseract binary installed
+# (handled in Dockerfile)
+pytesseract==0.3.13
+
+# PDF table detector + extractor → converts to Markdown
+# [cv] installs OpenCV needed for table region detection
+camelot-py[cv]==0.11.0
+
+# Web page fetcher + HTML parser for URL ingestion
+# Extracts clean article text, strips nav/footer/ads
+beautifulsoup4==4.12.3
+
+
+# ============================================================
+# GROUP 10 — Monitoring, Safety & Evaluation
+# Observability + PII detection + RAG quality measurement
+# ============================================================
+
+# Prometheus metrics — exposes /metrics endpoint
+# Prometheus scrapes this every 15 seconds
+prometheus-client==0.21.1
+
+# Structured JSON logging — every log line is a JSON object
+# Searchable by trace_id, user_id, event type
+structlog==24.4.0
+
+# Microsoft PII detection and masking
+# Scans every LLM response — masks emails, phones, SSNs
+presidio-analyzer==2.2.355
+presidio-anonymizer==2.2.355
+
+# RAG evaluation framework
+# Measures faithfulness, answer relevance, context recall
+# Runs automatically — CI/CD blocks deploy if quality drops
+ragas==0.2.10
+
+# Loads .env file in development
+# In Docker, env vars come from docker-compose.yml directly
+python-dotenv==1.0.1
