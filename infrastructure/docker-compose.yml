@@ -1,0 +1,264 @@
+# ============================================================
+# GenAI DocQA Platform — Docker Compose
+# ============================================================
+# Starts the entire development stack with one command:
+#   cd infrastructure
+#   docker compose up
+#
+# Services (Phase 1):
+#   postgres  → PostgreSQL 16 + pgvector extension
+#   redis     → Redis 7 for caching and rate limiting
+#   backend   → FastAPI app built from Dockerfile
+#
+# Future services (added in later phases):
+#   nginx       → reverse proxy (Phase 13)
+#   prometheus  → metrics scraping (Phase 10)
+#   grafana     → metrics dashboards (Phase 10)
+#   frontend    → React app (Phase 11)
+#
+# IMPORTANT — Service names as hostnames:
+#   Inside Docker network, services talk to each other by NAME
+#   postgres is reachable at: postgres:5432
+#   redis is reachable at:    redis:6379
+#   backend is reachable at:  backend:8000
+#   NOT localhost — localhost inside a container = that container itself
+# ============================================================
+
+# Docker Compose file format version
+# Version 3.8 supports all features we need (healthchecks, depends_on conditions)
+version: "3.8"
+
+services:
+  # ============================================================
+  # SERVICE 1 — PostgreSQL + pgvector
+  # ============================================================
+  postgres:
+    # pgvector/pgvector:pg16 = PostgreSQL 16 WITH pgvector pre-installed
+    # The official postgres:16 image does NOT include pgvector
+    # We need this specific image for semantic search to work
+    image: pgvector/pgvector:pg16
+
+    container_name: genai_docqa_postgres
+
+    # Environment variables configure PostgreSQL on first startup
+    # These create the database, user, and password
+    environment:
+      POSTGRES_DB: docqa # database name
+      POSTGRES_USER: docqa # database user
+      POSTGRES_PASSWORD: docqa_password # database password
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256 # secure auth method
+
+    # Port mapping: host:container
+    # 5432:5432 = your laptop port 5432 → container port 5432
+    # Lets you connect with psql or pgAdmin from your laptop directly
+    ports:
+      - "5432:5432"
+
+    # Persist data to local disk
+    # Without this: ALL DATA IS LOST on docker compose down
+    # With this: data survives container restarts and stops
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    # Health check — Docker runs this to know if postgres is ready
+    # condition: service_healthy in depends_on waits for this to pass
+    healthcheck:
+      # pg_isready checks if PostgreSQL is accepting connections
+      # -U docqa = use our database user
+      # -d docqa = check our specific database
+      test: ["CMD-SHELL", "pg_isready -U docqa -d docqa"]
+      interval: 5s # check every 5 seconds
+      timeout: 5s # timeout after 5 seconds
+      retries: 10 # try 10 times before marking unhealthy
+      start_period: 10s # wait 10s before first check (startup time)
+
+    # Restart policy
+    # unless-stopped: restart automatically unless explicitly stopped
+    restart: unless-stopped
+
+    # Resource limits — prevent one service from consuming everything
+    deploy:
+      resources:
+        limits:
+          memory: 512M # max 512MB RAM for PostgreSQL
+
+  # ============================================================
+  # SERVICE 2 — Redis
+  # ============================================================
+  redis:
+    image: redis:7-alpine # alpine = smaller image size (~30MB vs ~100MB)
+
+    container_name: genai_docqa_redis
+
+    # Redis configuration via command
+    # --requirepass: set password (matches REDIS_URL in .env)
+    # --appendonly yes: enable AOF persistence (data survives restarts)
+    # --maxmemory: limit memory usage
+    # --maxmemory-policy: what to do when memory is full
+    #   allkeys-lru = evict least recently used keys
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+
+    ports:
+      - "6379:6379"
+
+    volumes:
+      - redis_data:/data
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+    restart: unless-stopped
+
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # ============================================================
+  # SERVICE 3 — FastAPI Backend
+  # ============================================================
+  backend:
+    # Build from our Dockerfile (multi-stage build)
+    # context: where to find the code (backend/ folder)
+    # dockerfile: which Dockerfile to use
+    build:
+      context: ../backend # relative to this docker-compose.yml file
+      dockerfile: Dockerfile
+
+    container_name: genai_docqa_backend
+
+    # Don't start until postgres AND redis are healthy
+    # condition: service_healthy waits for healthcheck to pass
+    # Without this: backend starts before DB is ready → crash
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    # Environment variables for the backend
+    # These OVERRIDE any values in .env file
+    # Service names (postgres, redis) instead of localhost
+    environment:
+      # Database — uses 'postgres' service name, NOT localhost
+      DATABASE_URL: postgresql+asyncpg://docqa:docqa_password@postgres:5432/docqa
+
+      # Redis — uses 'redis' service name, NOT localhost
+      REDIS_URL: redis://redis:6379/0
+
+      # Application settings
+      ENVIRONMENT: development
+      DEBUG: "true"
+      APP_VERSION: "1.0.0"
+      BACKEND_HOST: "0.0.0.0"
+      BACKEND_PORT: "8000"
+
+      # CORS — allow local frontend dev servers
+      ALLOWED_ORIGINS: '["http://localhost:3000","http://localhost:5173"]'
+
+      # Security — loaded from .env file on your laptop
+      # These are passed through from your local environment
+      SECRET_KEY: ${SECRET_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+
+      # LLM — loaded from .env file on your laptop
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-} # optional, default empty
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-} # optional, default empty
+
+      # Embeddings — local Sentence-Transformers (free, no API key)
+      EMBEDDING_PROVIDER: local
+      EMBEDDING_MODEL: all-MiniLM-L6-v2
+
+      # Storage — local disk in development
+      STORAGE_BACKEND: local
+      UPLOAD_DIR: /app/uploads
+      MAX_FILE_SIZE_MB: "50"
+
+      # LangSmith tracing — optional but recommended
+      LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-false}
+      LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY:-}
+      LANGCHAIN_PROJECT: ${LANGCHAIN_PROJECT:-genai-docqa}
+
+      # Rate limiting
+      RATE_LIMIT_PER_MINUTE: "60"
+      RATE_LIMIT_UPLOAD_PER_MINUTE: "10"
+      RATE_LIMIT_AUTH_PER_MINUTE: "20"
+
+      # Admin credentials
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@docqa.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123!}
+
+    ports:
+      - "8000:8000" # FastAPI API
+
+    # Mount volumes into the container
+    volumes:
+      # Persist uploaded files between restarts
+      - uploads_data:/app/uploads
+
+      # HOT RELOAD in development:
+      # Mount source code from your laptop into the container
+      # When you save a file → uvicorn auto-reloads → changes appear immediately
+      # Comment this out in production
+      - ../backend/app:/app/app
+
+    # Override the Dockerfile CMD for development
+    # --reload: watch for file changes and restart automatically
+    # This is why hot reload works — uvicorn watches /app/app for changes
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+      --reload-dir /app/app
+      --loop uvloop
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s # give the app time to start before first check
+
+    restart: unless-stopped
+
+    deploy:
+      resources:
+        limits:
+          memory: 1G # backend needs more RAM (Sentence-Transformers model)
+
+# ============================================================
+# VOLUMES — Persistent Data Storage
+# ============================================================
+# Named volumes persist data on your local machine
+# docker compose down        → containers stop, volumes KEPT
+# docker compose down -v     → containers stop, volumes DELETED (careful!)
+
+volumes:
+  postgres_data:
+    driver: local # store on local disk
+
+  redis_data:
+    driver: local
+
+  uploads_data:
+    driver: local
+
+# ============================================================
+# NETWORKS
+# ============================================================
+# Docker Compose creates a default network automatically
+# All services on this network can reach each other by service name
+# External traffic reaches services only through published ports
+#
+# We use the default network — no custom network needed for Phase 1
+# In Phase 13 (production) we add separate frontend/backend networks
