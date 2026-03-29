@@ -361,7 +361,7 @@ Key variables:
 Full-Stack & AI Engineer | Building in public
 
 - GitHub: [@digvijaysingh21](https://github.com/digvijaysingh21)
-- LinkedIn: [Digvijay Singh Rajput](https://linkedin.com/in/digvijaysingh21)
+- LinkedIn: [Digvijay Singh Rajput](https://linkedin.com/in/digvijay-singh-rajput)
 
 ---
 
