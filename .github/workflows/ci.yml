@@ -1,0 +1,234 @@
+# ============================================================
+# GenAI DocQA Platform — Continuous Integration
+# ============================================================
+# Runs on EVERY push to ANY branch
+# Also runs on pull requests to main
+#
+# JOBS (run in parallel for speed):
+#   lint      → ruff: check code style + security
+#   typecheck → mypy: check type annotations
+#   test      → pytest: run all tests
+#   docker    → verify Docker image builds (runs after above pass)
+#
+# If ANY job fails → red X on commit → do not merge
+# If ALL jobs pass → green checkmark → safe to merge
+# ============================================================
+
+name: CI
+
+# ── When to run this workflow ─────────────────────────────────
+on:
+  # Run on every push to any branch
+  push:
+    branches:
+      - "**" # matches all branches: phase-1, phase-2, main, etc.
+
+  # Run on pull requests targeting main
+  pull_request:
+    branches:
+      - main
+
+  # Allow manual trigger from GitHub Actions UI
+  workflow_dispatch:
+
+# ── Default settings for all jobs ────────────────────────────
+defaults:
+  run:
+    # Run commands from the backend directory by default
+    # So we don't need "cd backend &&" before every command
+    working-directory: backend
+
+# ================================================================
+# JOB 1 — Lint (ruff)
+# Catches: unused imports, style issues, security problems
+# ================================================================
+jobs:
+  lint:
+    name: "Lint (ruff)"
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Check out the code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Set up Python
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+          # Cache pip downloads between runs
+          # First run: downloads everything (~2 min)
+          # Subsequent runs: uses cache (~10 seconds)
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      # Step 3: Install only ruff (fast — don't need all dependencies)
+      - name: Install ruff
+        run: pip install ruff==0.9.1
+
+      # Step 4: Run ruff linter
+      # --output-format=github: formats errors for GitHub annotations
+      # Errors appear as inline comments on the offending lines
+      - name: Run ruff lint
+        run: ruff check . --output-format=github
+
+      # Step 5: Check formatting
+      # ruff format --check: fails if code is not formatted correctly
+      # Does NOT modify files — just checks
+      - name: Check ruff formatting
+        run: ruff format . --check
+
+  # ================================================================
+  # JOB 2 — Type Check (mypy)
+  # Catches: wrong argument types, missing return types, None errors
+  # ================================================================
+  typecheck:
+    name: "Type Check (mypy)"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      # Install all dependencies — mypy needs to see imported types
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Run mypy type checker
+      # --ignore-missing-imports: don't fail on libraries without stubs
+      # (already configured in pyproject.toml but explicit here too)
+      - name: Run mypy
+        run: mypy app/ --ignore-missing-imports
+
+  # ================================================================
+  # JOB 3 — Tests (pytest)
+  # Runs all unit and integration tests
+  # ================================================================
+  test:
+    name: "Tests (pytest)"
+    runs-on: ubuntu-latest
+
+    # Spin up real PostgreSQL and Redis for integration tests
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: docqa_test
+          POSTGRES_USER: docqa
+          POSTGRES_PASSWORD: docqa_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Run database migrations before tests
+      - name: Run migrations
+        env:
+          DATABASE_URL: postgresql+asyncpg://docqa:docqa_password@localhost:5432/docqa_test
+          SECRET_KEY: test-secret-key-minimum-32-characters-long-for-ci
+          ENCRYPTION_KEY: test-encryption-key-32-chars-long-for-ci!!
+          GROQ_API_KEY: test-key-not-used-in-unit-tests
+        run: alembic upgrade head
+
+      # Run all tests
+      # -v: verbose output (see each test name)
+      # --tb=short: short traceback on failure
+      # -x: stop on first failure (fail fast)
+      - name: Run pytest
+        env:
+          ENVIRONMENT: test
+          DATABASE_URL: postgresql+asyncpg://docqa:docqa_password@localhost:5432/docqa_test
+          REDIS_URL: redis://localhost:6379/1
+          SECRET_KEY: test-secret-key-minimum-32-characters-long-for-ci
+          ENCRYPTION_KEY: test-encryption-key-32-chars-long-for-ci!!
+          GROQ_API_KEY: test-key-not-used-in-unit-tests
+          DEBUG: "false"
+        run: pytest -v --tb=short -x
+
+      # Upload coverage report as artifact (optional)
+      # View it in GitHub Actions → Artifacts after the run
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always() # upload even if tests fail
+        with:
+          name: coverage-report
+          path: backend/htmlcov/
+          retention-days: 7
+
+  # ================================================================
+  # JOB 4 — Docker Build
+  # Verifies the Docker image builds successfully
+  # Runs AFTER lint, typecheck, and test all pass
+  # ================================================================
+  docker:
+    name: "Docker Build"
+    runs-on: ubuntu-latest
+
+    # Only run this job if ALL previous jobs passed
+    needs: [lint, typecheck, test]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Set up Docker Buildx
+      # Buildx = modern Docker build system with better caching
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build the Docker image
+      # --no-push: build only, don't push to registry
+      # cache-from/cache-to: cache layers between CI runs
+      # This makes subsequent builds faster
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          dockerfile: ./backend/Dockerfile
+          push: false # don't push — just verify it builds
+          tags: genai-docqa-backend:ci-test
+
+          # Cache Docker layers in GitHub Actions cache
+          # Speeds up builds when requirements.txt hasn't changed
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Confirm build success
+        run: echo "Docker image built successfully ✅"
+        working-directory: . # override default working-directory for this step

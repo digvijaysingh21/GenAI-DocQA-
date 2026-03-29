@@ -1,0 +1,190 @@
+# ============================================================
+# GenAI DocQA Platform — Continuous Deployment
+# ============================================================
+# Runs ONLY on push/merge to main branch
+# NOT on feature branches (phase-1, phase-2, etc.)
+#
+# WHAT IT DOES:
+#   1. Build Docker image from backend/Dockerfile
+#   2. Push to GitHub Container Registry (ghcr.io) — free
+#   3. Tag image with: latest + git SHA (for rollback)
+#
+# PHASE 13 ADDITION:
+#   Step 4 will deploy to Railway/Fly.io automatically
+#   For now: build + push only
+#
+# GITHUB CONTAINER REGISTRY:
+#   Images stored at: ghcr.io/digvijaysingh21/genai-docqa-backend
+#   Free for public repos
+#   Pull with: docker pull ghcr.io/digvijaysingh21/genai-docqa-backend:latest
+# ============================================================
+
+name: Deploy
+
+# ── When to run ───────────────────────────────────────────────
+on:
+  # Only trigger on push to main
+  # This happens when a PR is merged or direct push to main
+  push:
+    branches:
+      - main
+
+  # Allow manual trigger from GitHub Actions UI
+  # Useful for re-deploying without a code change
+  workflow_dispatch:
+
+# ── Permissions ───────────────────────────────────────────────
+# Required to push Docker images to GitHub Container Registry
+permissions:
+  contents: read # read the repository code
+  packages: write # push Docker images to ghcr.io
+
+# ================================================================
+# JOB 1 — Build and Push Docker Image
+# ================================================================
+jobs:
+  build-and-push:
+    name: "Build and Push Docker Image"
+    runs-on: ubuntu-latest
+
+    # Output the image tag so other jobs can use it
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      # Step 1: Checkout code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Set up Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Step 3: Log in to GitHub Container Registry
+      # GITHUB_TOKEN is automatically available in Actions — no setup needed
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }} # your GitHub username
+          password: ${{ secrets.GITHUB_TOKEN }} # auto-provided by GitHub
+
+      # Step 4: Generate image metadata (tags and labels)
+      # This creates two tags:
+      #   latest     → always points to most recent main build
+      #   sha-abc123 → specific commit (used for rollback)
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/genai-docqa-backend
+          tags: |
+            # Tag with 'latest' for every push to main
+            type=raw,value=latest
+
+            # Tag with short git SHA (first 7 chars of commit hash)
+            # Example: sha-a1b2c3d
+            # Used for rollback: docker pull ghcr.io/.../genai-docqa-backend:sha-a1b2c3d
+            type=sha,prefix=sha-,format=short
+
+            # Tag with branch name
+            type=ref,event=branch
+
+      # Step 5: Build and push Docker image
+      # Multi-stage build (defined in Dockerfile)
+      # Stage 1: install dependencies
+      # Stage 2: production image (smaller, no build tools)
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          dockerfile: ./backend/Dockerfile
+          push: true # push to ghcr.io
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+          # Cache Docker layers in GitHub Actions cache
+          # If requirements.txt unchanged → pip install layer is cached
+          # Rebuild takes ~30 seconds instead of ~5 minutes
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+          # Build arguments (available in Dockerfile as ARG)
+          build-args: |
+            APP_VERSION=${{ github.sha }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+
+      # Step 6: Log image digest for audit trail
+      # The digest is a unique identifier for this exact image
+      # Use it to verify you're running exactly what was built
+      - name: Log image details
+        run: |
+          echo "Image pushed successfully ✅"
+          echo "Tags: ${{ steps.meta.outputs.tags }}"
+          echo "Digest: ${{ steps.build.outputs.digest }}"
+          echo ""
+          echo "Pull with:"
+          echo "  docker pull ghcr.io/${{ github.repository_owner }}/genai-docqa-backend:latest"
+          echo ""
+          echo "Pull specific commit:"
+          echo "  docker pull ghcr.io/${{ github.repository_owner }}/genai-docqa-backend:sha-${{ github.sha }}"
+
+  # ================================================================
+  # JOB 2 — Deployment (Phase 13)
+  # Currently: placeholder — logs what would happen
+  # Phase 13: replace with actual Railway/Fly.io deployment
+  # ================================================================
+  deploy:
+    name: "Deploy to Production"
+    runs-on: ubuntu-latest
+
+    # Only run after image is built and pushed successfully
+    needs: build-and-push
+
+    # Production environment — requires manual approval on GitHub
+    # Set this up in: GitHub repo → Settings → Environments → production
+    # Reviewers must click "Approve" before deployment proceeds
+    environment:
+      name: production
+      url: https://your-app-url.railway.app # update in Phase 13
+
+    steps:
+      - name: Deployment placeholder
+        run: |
+          echo "================================================"
+          echo "  DEPLOYMENT — Phase 13 Placeholder"
+          echo "================================================"
+          echo ""
+          echo "Image ready to deploy:"
+          echo "  ${{ needs.build-and-push.outputs.image-tag }}"
+          echo ""
+          echo "In Phase 13, this step will:"
+          echo "  1. Deploy to Railway or Fly.io"
+          echo "  2. Run database migrations"
+          echo "  3. Health check the new deployment"
+          echo "  4. Notify on success/failure"
+          echo ""
+          echo "For now — pull and run manually:"
+          echo "  docker pull ghcr.io/${{ github.repository_owner }}/genai-docqa-backend:latest"
+          echo "  docker run -p 8000:8000 --env-file .env ghcr.io/${{ github.repository_owner }}/genai-docqa-backend:latest"
+
+      # Notify on successful deployment
+      # In Phase 13: replace with Slack/Discord webhook notification
+      - name: Notify deployment success
+        if: success()
+        run: |
+          echo "✅ Deployment pipeline completed"
+          echo "Version: ${{ github.sha }}"
+          echo "Deployed by: ${{ github.actor }}"
+          echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+      # Notify on deployment failure
+      - name: Notify deployment failure
+        if: failure()
+        run: |
+          echo "❌ Deployment pipeline failed"
+          echo "Version: ${{ github.sha }}"
+          echo "Failed by: ${{ github.actor }}"
+          echo "Check logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
